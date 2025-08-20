@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -74,8 +75,8 @@ const (
 )
 
 type ChatCompletionPlugin struct {
-	ID  PluginID  `json:"id"`
-	PDF PDFPlugin `json:"pdf,omitempty"`
+	ID  PluginID   `json:"id"`
+	PDF *PDFPlugin `json:"pdf,omitempty"`
 }
 
 type PDFPlugin struct {
@@ -95,11 +96,10 @@ type ChatCompletionRequest struct {
 
 	// MaxTokens The maximum number of tokens that can be generated in the chat completion.
 	// This value can be used to control costs for text generated via API.
-	// This value is now deprecated in favor of max_completion_tokens, and is not compatible with o1 series models.
-	// refs: https://platform.openai.com/docs/api-reference/chat/create#chat-create-max_tokens
 	MaxTokens int `json:"max_tokens,omitempty"`
-	// MaxCompletionTokens An upper bound for the number of tokens that can be generated for a completion,
-	// including visible output tokens and reasoning tokens https://platform.openai.com/docs/guides/reasoning
+	// MaxCompletionTokens Upper bound for completion tokens, supported for OpenAI API compliance.
+	// Prefer "max_tokens" for limiting output in new integrations.
+	// refs: https://platform.openai.com/docs/api-reference/chat/create#chat-create-max_completion_tokens
 	MaxCompletionTokens int                           `json:"max_completion_tokens,omitempty"`
 	Temperature         float32                       `json:"temperature,omitempty"`
 	TopP                float32                       `json:"top_p,omitempty"`
@@ -148,7 +148,7 @@ type ChatCompletionRequest struct {
 	Transforms []string `json:"transforms,omitempty"`
 	// Optional web search options
 	// https://openrouter.ai/docs/features/web-search#specifying-search-context-size
-	WebSearchOptions WebSearchOptions `json:"web_search_options,omitempty"`
+	WebSearchOptions *WebSearchOptions `json:"web_search_options,omitempty"`
 
 	Usage *IncludeUsage `json:"usage,omitempty"`
 }
@@ -187,21 +187,21 @@ const (
 // Provider Routing: https://openrouter.ai/docs/features/provider-routing
 type ChatProvider struct {
 	// The order of the providers in the list determines the order in which they are called.
-	Order []string `json:"order"`
+	Order []string `json:"order,omitempty"`
 	// Allow fallbacks to other providers if the primary provider fails.
-	AllowFallbacks bool `json:"allow_fallbacks"`
+	AllowFallbacks bool `json:"allow_fallbacks,omitempty"`
 	// Only use providers that support all parameters in your request.
-	RequireParameters bool `json:"require_parameters"`
+	RequireParameters bool `json:"require_parameters,omitempty"`
 	// Control whether to use providers that may store data.
-	DataCollection DataCollection `json:"data_collection"`
+	DataCollection DataCollection `json:"data_collection,omitempty"`
 	// List of provider slugs to allow for this request.
-	Only []string `json:"only"`
+	Only []string `json:"only,omitempty"`
 	// List of provider slugs to skip for this request.
-	Ignore []string `json:"ignore"`
+	Ignore []string `json:"ignore,omitempty"`
 	// List of quantization levels to filter by (e.g. ["int4", "int8"]).
-	Quantizations []string `json:"quantizations"`
+	Quantizations []string `json:"quantizations,omitempty"`
 	// Sort providers by price or throughput. (e.g. "price" or "throughput").
-	Sort ProviderSorting `json:"sort"`
+	Sort ProviderSorting `json:"sort,omitempty"`
 }
 
 // ChatCompletionResponse represents a response structure for chat completion API.
@@ -212,7 +212,7 @@ type ChatCompletionResponse struct {
 	Model             string                 `json:"model"`
 	Choices           []ChatCompletionChoice `json:"choices"`
 	Citations         []string               `json:"citations"`
-	Usage             Usage                  `json:"usage"`
+	Usage             *Usage                 `json:"usage,omitempty"`
 	SystemFingerprint string                 `json:"system_fingerprint"`
 
 	// http.Header
@@ -413,6 +413,7 @@ type URLCitation struct {
 	StartIndex int    `json:"start_index"`
 	EndIndex   int    `json:"end_index"`
 	Title      string `json:"title"`
+	Content    string `json:"content"`
 	URL        string `json:"url"`
 }
 
@@ -644,6 +645,7 @@ type ChatCompletionStreamChoiceDelta struct {
 	FunctionCall *FunctionCall `json:"function_call,omitempty"`
 	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
 	Refusal      string        `json:"refusal,omitempty"`
+	Annotations  []Annotation  `json:"annotations,omitempty"`
 	Reasoning    *string       `json:"reasoning,omitempty"`
 
 	// This property is used for the "reasoning" feature supported by deepseek-reasoner
@@ -714,4 +716,14 @@ func (s *ChatCompletionStream) Close() {
 // String is a helper function returns a pointer to the string value passed in.
 func String(s string) *string {
 	return &s
+}
+
+// SetLogLevel sets the minimum log level for the internally used logger.
+func SetLogLevel(level zerolog.Level) {
+	zerolog.SetGlobalLevel(level)
+}
+
+// DisableLogs disables the internally used logger.
+func DisableLogs() {
+	zerolog.SetGlobalLevel(zerolog.Disabled)
 }

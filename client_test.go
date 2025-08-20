@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	openrouter "github.com/revrost/go-openrouter"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,7 @@ func TestCreateChatCompletion(t *testing.T) {
 		{
 			name: "basic completion",
 			request: openrouter.ChatCompletionRequest{
-				Model: "qwen/qwq-32b:free",
+				Model: "qwen/qwen3-235b-a22b-07-25:free",
 				Messages: []openrouter.ChatCompletionMessage{
 					{
 						Role:    openrouter.ChatMessageRoleUser,
@@ -143,6 +144,29 @@ func TestExplicitPromptCachingApplies(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestUsageAccounting(t *testing.T) {
+	client := createTestClient(t)
+	request := openrouter.ChatCompletionRequest{
+		Model: "qwen/qwen3-235b-a22b-07-25:free",
+		Messages: []openrouter.ChatCompletionMessage{
+			openrouter.SystemMessage("You are a helpful assistant."),
+			openrouter.UserMessage("How are you?"),
+		},
+		Usage: &openrouter.IncludeUsage{
+			Include: true,
+		},
+	}
+
+	response, err := client.CreateChatCompletion(context.Background(), request)
+	require.NoError(t, err)
+
+	usage := response.Usage
+	require.NotNil(t, usage)
+	require.NotNil(t, usage.PromptTokens)
+	require.NotNil(t, usage.CompletionTokens)
+	require.NotNil(t, usage.TotalTokens)
+}
+
 func TestAuthFailure(t *testing.T) {
 	// Test with invalid token
 	client := openrouter.NewClient("invalid-token")
@@ -157,4 +181,83 @@ func TestAuthFailure(t *testing.T) {
 	if err == nil {
 		t.Error("Expected authentication error, got nil")
 	}
+}
+
+func TestProviderError(t *testing.T) {
+	client := createTestClient(t)
+
+	ctx := context.Background()
+	_, err := client.CreateChatCompletion(ctx, openrouter.ChatCompletionRequest{
+		Model: "openai/gpt-5-nano",
+		Messages: []openrouter.ChatCompletionMessage{
+			{
+				Role:    openrouter.ChatMessageRoleUser,
+				Content: openrouter.Content{Text: "This will always fail with a provider error, because openai requires the message to contain the word j-s-o-n."},
+			},
+		},
+		ResponseFormat: &openrouter.ChatCompletionResponseFormat{
+			Type: openrouter.ChatCompletionResponseFormatTypeJSONObject,
+		},
+	})
+
+	if err == nil {
+		t.Error("Expected api error, got nil")
+	}
+
+	apiErr, ok := err.(*openrouter.APIError)
+	if !ok {
+		t.Errorf("Expected api error, got %T", err)
+	}
+
+	if msg := apiErr.Error(); msg != "provider error, code: 400, message: Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'." {
+		t.Errorf("Expected provider error, got %v", msg)
+	}
+}
+
+func TestGetGeneration(t *testing.T) {
+	client := createTestClient(t)
+
+	ctx := context.Background()
+
+	request := openrouter.ChatCompletionRequest{
+		Model: "openai/gpt-oss-20b:free",
+		Messages: []openrouter.ChatCompletionMessage{
+			openrouter.SystemMessage("You are a helpful assistant."),
+			openrouter.UserMessage("How are you?"),
+		},
+		Provider: &openrouter.ChatProvider{
+			Only: []string{"atlas-cloud/fp8"},
+		},
+	}
+
+	response, err := client.CreateChatCompletion(ctx, request)
+	require.NoError(t, err)
+
+	// openrouter takes a second to store it (removing this causes it to fail)
+	time.Sleep(1 * time.Second)
+
+	generation, err := client.GetGeneration(ctx, response.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, generation.ID, response.ID)
+}
+
+func TestListModels(t *testing.T) {
+	client := createTestClient(t)
+
+	models, err := client.ListModels(context.Background())
+	require.NoError(t, err)
+
+	require.NotEmpty(t, models)
+	require.NotEmpty(t, models[0].ID)
+}
+
+func TestListUserModels(t *testing.T) {
+	client := createTestClient(t)
+
+	models, err := client.ListUserModels(context.Background())
+	require.NoError(t, err)
+
+	require.NotEmpty(t, models)
+	require.NotEmpty(t, models[0].ID)
 }
